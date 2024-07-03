@@ -1,13 +1,34 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
 // middleware
-app.use(cors());
+app.use(cors({
+      origin: ['http://localhost:5173'],
+      credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser())
+
+// custom middlewares
+const verifyToken = async (req, res, next) => {
+      const token = req.cookies.token;
+      if (!token) {
+            return res.status(401).send({ message: 'Not Authorized' })
+      }
+      jwt.verify(token, process.env.TOKEN_SECRET, (err, decoded) => {
+            if (err) {
+                  return res.status(401).send({ message: 'Not Authorized' })
+            }
+            req.user = decoded;
+            next()
+      })
+}
 
 const uri = `mongodb+srv://${process.env.SECRET_USER_NAME}:${process.env.SECRET_USER_PASSWORD}@cluster0.d8abmis.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -23,12 +44,36 @@ const client = new MongoClient(uri, {
 async function run() {
       try {
             // Connect the client to the server	(optional starting in v4.7)
-            await client.connect();
+            // await client.connect();
 
-            const touristsCollection = client.db("touristsDB").collection("tourists");
-            const countriesCollection = client.db("touristsDB").collection("countries");
-            const tourGuidesCollection = client.db("touristsDB").collection("tourGuides");
+            const touristsCollection = client.db("travelsDB").collection("touristSpots");
+            const countriesCollection = client.db("travelsDB").collection("countries");
+            const tourGuidesCollection = client.db("travelsDB").collection("tourGuides");
 
+            // auth/jwt related api's
+
+            // set token to browser cookie
+            app.post('/jwt', async (req, res) => {
+                  const user = req.body;
+                  const token = jwt.sign(user, process.env.TOKEN_SECRET, { expiresIn: '1h' });
+                  res
+                        .cookie('token', token, {
+                              httpOnly: true,
+                              sameSite: 'lax',
+                              secure: false
+                        })
+                        .send({ message: true })
+            })
+
+            // remove token when logout
+            app.post('/logout', async (req, res) => {
+                  const user = req.body;
+                  res
+                        .clearCookie('token', { maxAge: 0 })
+                        .send({ message: true })
+            })
+
+            // tourist spots related api's
             app.get('/touristSpots', async (req, res) => {
                   const result = await touristsCollection.find().toArray();
                   res.send(result);
@@ -51,14 +96,13 @@ async function run() {
                   res.send(result);
             })
 
-            // app.get('/touristSpotDetails/:id', async (req, res) => {
-            //       const id = req.params.id;
-            //       const query = { _id: new ObjectId(id) };
-            //       const result = await touristsCollection.findOne(query);
-            //       res.send(result);
-            // })
+            // my list api
+            app.get('/touristSpots/:email', verifyToken, async (req, res) => {
 
-            app.get('/touristSpots/:email', async (req, res) => {
+                  if (req.params?.email !== req.user?.email) {
+                        return res.status(402).send({ message: 'Access Forbidden' })
+                  }
+
                   const email = req.params.email;
                   const query = { email: email };
 
@@ -93,7 +137,7 @@ async function run() {
                   res.send(result);
             })
 
-            // for countries
+            // countries related api's
             app.get('/countries', async (req, res) => {
                   const result = await countriesCollection.find().toArray();
                   res.send(result);
